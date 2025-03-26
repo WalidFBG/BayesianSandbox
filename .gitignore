@@ -1,0 +1,31 @@
+# Ignore virtual environment
+.venv/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+eggs/
+lib/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# VSCode settings and workspace
+.vscode/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+
+output/
