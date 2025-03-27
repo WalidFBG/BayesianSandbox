@@ -72,14 +72,6 @@ def train_weights(
         for role in roles:
             weights[obs_type][role] = np.random.randn(latent_dim) * 0.01
 
-    weights = {
-        "IsSteal": {
-            "ManOnBase1": np.array([0.9]),
-            "ManOnBase2": np.array([0.25]),
-            "ManOnBase3": np.array([0.05]),
-        },
-    }
-
     # --- Training Loop ---
     for epoch in range(num_epochs):
         print(f"\n--- Epoch {epoch + 1}/{num_epochs} ---")
