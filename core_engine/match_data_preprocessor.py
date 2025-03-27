@@ -23,14 +23,12 @@ def preprocess_match(
         roles = obs.roles
 
         assert obs_type in weights, f"Weights missing for observation type '{obs_type}'"
-
         role_weights = weights[obs_type]
-        role_ids = sorted(roles.keys())
 
         row_player_idxs = []
         row_weight_vectors = []
 
-        for role in role_ids:
+        for role in sorted(roles.keys()):
             pid = roles[role]
             assert role in role_weights, (
                 f"Missing weight for role '{role}' in '{obs_type}'"
@@ -41,7 +39,6 @@ def preprocess_match(
             row_player_idxs.append(player_id_to_idx[pid])
             row_weight_vectors.append(role_weights[role])
 
-        # Pad with dummy player (index 0) and zero weights
         while len(row_player_idxs) < max_roles:
             row_player_idxs.append(0)
             row_weight_vectors.append(np.zeros(latent_dim))
@@ -51,9 +48,9 @@ def preprocess_match(
         player_idxs.append(row_player_idxs)
         weight_vectors.append(row_weight_vectors)
 
-    generic_logits = np.array(generic_logits)
-    outcomes = np.array(outcomes)
-    player_idxs = np.array(player_idxs, dtype=int)
-    weight_vectors = np.array(weight_vectors)
-
-    return generic_logits, outcomes, player_idxs, weight_vectors
+    return (
+        np.array(generic_logits),
+        np.array(outcomes),
+        np.array(player_idxs, dtype=int),
+        np.array(weight_vectors, dtype=float),
+    )

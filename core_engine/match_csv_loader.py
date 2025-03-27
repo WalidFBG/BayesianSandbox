@@ -18,7 +18,7 @@ def load_matches_from_csv(
         match_id = str(row["MatchId"])
         timestamp = pd.to_datetime(row["DateTime"])
         outcome = int(row["Outcome"])
-        base_logit = float(row["GenericProbability"])
+        base_logit = float(row["BaseLogit"])
 
         roles_config = observation_role_config[obs_type]
         roles = {}
