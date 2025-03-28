@@ -1,7 +1,7 @@
 from numba import njit
 import numpy as np
-import time
 from data_match.match_csv_loader import load_matches_from_csv
+from scipy.optimize import minimize
 
 
 def create_obs_role_maps(observation_role_config):
@@ -61,7 +61,7 @@ def preprocess_flat_roles(matches, obs_type_map, obs_role_maps, player_idx_map):
 
     base_estimates = np.empty(total_obs, dtype=np.float64)
     outcomes = np.empty(total_obs, dtype=np.int8)
-    match_dates = np.empty(total_obs, dtype=np.int64)  # store as days since epoch
+    match_dates = np.empty(total_obs, dtype=np.int64)
     role_ptrs = np.empty((total_obs, 2), dtype=np.int64)
     roles_data = np.empty((total_roles, 3), dtype=np.int64)
 
@@ -143,7 +143,7 @@ def compute_likelihood(
 
 
 @njit
-def run_ekf_jit(
+def run_ekf(
     base_estimates,
     outcomes,
     role_ptrs,
@@ -201,14 +201,6 @@ training_config = {
     },
 }
 
-weights = {
-    "IsSteal": {
-        "ManOnBase1": np.array([0.267]),
-        "ManOnBase2": np.array([0.083]),
-        "ManOnBase3": np.array([0.012]),
-    },
-}
-
 # ----- Load Matches
 matches = load_matches_from_csv(
     "data/mlb_2019.csv", training_config["observation_role_config"]
@@ -220,9 +212,6 @@ print(f"Loaded {len(matches)} matches.")
 obs_type_map, obs_role_maps = create_obs_role_maps(
     training_config["observation_role_config"]
 )
-weights_array = create_weights_array(
-    weights, obs_type_map, obs_role_maps, training_config["latent_dim"]
-)
 player_latent_states, player_variances, player_last_update, player_idx_map = (
     initialize_player_latents_and_variances(matches, training_config["latent_dim"])
 )
@@ -231,58 +220,76 @@ base_estimates, outcomes, role_ptrs, roles_data, match_dates, match_obs_ranges =
     preprocess_flat_roles(matches, obs_type_map, obs_role_maps, player_idx_map)
 )
 
-# ----- Training Loop
-original_latent_states = player_latent_states.copy()
-original_variances = player_variances.copy()
-original_last_update = player_last_update.copy()
+# ----- Optimize
+flat_weights_init = np.array([0.0, 0.0, 0.0])
+init_process_noise = 0.001
+init_measurement_noise = 0.005
 
-num_epochs = training_config["num_epochs"]
-process_noise = 0.001
-measurement_noise = 0.005
 
-epoch_len = len(base_estimates)
+def unpack_params(params):
+    weights = {
+        "IsSteal": {
+            "ManOnBase1": np.array([params[0]]),
+            "ManOnBase2": np.array([params[1]]),
+            "ManOnBase3": np.array([params[2]]),
+        }
+    }
+    process_noise = max(params[3], 1e-6)
+    measurement_noise = max(params[4], 1e-6)
+    return weights, process_noise, measurement_noise
 
-for epoch in range(num_epochs):
-    start_time = time.perf_counter()
 
-    likelihood = 0.0
+def objective(params):
+    weights, process_noise, measurement_noise = unpack_params(params)
+    weights_array = create_weights_array(weights, obs_type_map, obs_role_maps, 1)
+
+    latents = player_latent_states.copy()
+    variances = player_variances.copy()
+    last_update = player_last_update.copy()
+
+    total_ll = 0.0
 
     for match_start, match_end, match_date, unique_players in match_obs_ranges:
         for pid in unique_players:
-            last = player_last_update[pid]
+            last = last_update[pid]
             if last == 0:
-                player_variances[pid].fill(1.0)
+                variances[pid].fill(1.0)
             else:
                 days_since = match_date - last
-                player_variances[pid] += process_noise * days_since
-            player_last_update[pid] = match_date
+                variances[pid] += process_noise * days_since
+            last_update[pid] = match_date
 
-        likelihood += compute_likelihood(
+        total_ll += compute_likelihood(
             base_estimates[match_start:match_end],
             outcomes[match_start:match_end],
             role_ptrs[match_start:match_end],
             roles_data,
-            player_latent_states,
+            latents,
             weights_array,
         )
 
-        run_ekf_jit(
+        run_ekf(
             base_estimates[match_start:match_end],
             outcomes[match_start:match_end],
             role_ptrs[match_start:match_end],
             roles_data,
-            player_latent_states,
-            player_variances,
+            latents,
+            variances,
             weights_array,
             measurement_noise,
         )
+    print(f"likelihood: {total_ll}")
+    return total_ll
 
-    end_time = time.perf_counter()
-    elapsed_ms = (end_time - start_time) * 1000
 
-    print(f"Epoch {epoch}, likelihood: {likelihood}, elapsed = {elapsed_ms:.2f} ms")
+x0 = np.concatenate([flat_weights_init, [init_process_noise, init_measurement_noise]])
+res = minimize(
+    objective,
+    x0,
+    bounds=[(-5, 5)] * len(flat_weights_init) + [(1e-6, 0.1), (1e-6, 0.1)],
+)
 
-    if epoch < num_epochs - 1:
-        player_latent_states[:] = original_latent_states
-        player_variances[:] = original_variances
-        player_last_update[:] = original_last_update
+opt_weights, opt_process_noise, opt_measurement_noise = unpack_params(res.x)
+print("Optimized Weights:", opt_weights)
+print("Process Noise:", opt_process_noise)
+print("Measurement Noise:", opt_measurement_noise)
